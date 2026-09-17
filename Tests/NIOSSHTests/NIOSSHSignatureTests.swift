@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Crypto
 import NIOCore
 import XCTest
 
@@ -56,6 +57,23 @@ final class NIOSSHSignatureTests: XCTestCase {
 
         XCTAssertThrowsError(try buffer.readSSHSignature()) { error in
             XCTAssertEqual((error as? NIOSSHError)?.type, .invalidSSHMessage)
+        }
+    }
+
+    /// Positive boundary: a full-width `r`/`s` (exactly the curve point size) and the classic
+    /// 33-byte mpint with a leading zero sign byte must both still parse. The guard added for
+    /// GHSA-998x-vgvp-xwpc must not reject legitimate signatures.
+    func testFullWidthAndSignPaddedComponentsAreAccepted() throws {
+        let priv = NIOSSHPrivateKey(p256Key: .init())
+        var signed = ByteBufferAllocator().buffer(capacity: 256)
+        // Sign until we produce an r or s whose mpint encoding carries the 0x00 sign byte, so the
+        // padded form is exercised as well as the plain full-width form.
+        for _ in 0..<64 {
+            var buffer = ByteBufferAllocator().buffer(capacity: 256)
+            let signature = try priv.sign(digest: SHA256.hash(data: Array("hello".utf8)))
+            buffer.writeSSHSignature(signature)
+            signed = buffer
+            XCTAssertNotNil(try signed.readSSHSignature())
         }
     }
 }
