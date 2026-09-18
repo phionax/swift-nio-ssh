@@ -104,8 +104,9 @@ final class SSHPacketSerializerTests: XCTestCase {
         self.runVersionHandshake(serializer: &serializer, parser: &parser)
 
         var buffer = ByteBuffer()
-        // 守住"修复前必红"的前提:若某 SwiftNIO 版本给无参 init 预配 ≥5 字节，修复前的
-        // moveWriterIndex 越界将不再触发，测试会静默变绿（审阅 F1，上游同型测试均有此断言）。
+        // 守住"修复前必红"的前提(与 ByteBuffer+SSHTests.swift 同型测试的容量断言一致):若某
+        // SwiftNIO 版本给无参 init 预配 ≥5 字节，修复前的 moveWriterIndex 越界将不再触发，
+        // 测试会静默变绿(审阅 F1)。
         XCTAssertEqual(buffer.capacity, 0)
         XCTAssertNoThrow(try serializer.serialize(message: message, to: &buffer))
 
