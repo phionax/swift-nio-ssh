@@ -90,6 +90,25 @@ final class SSHPacketSerializerTests: XCTestCase {
         }
     }
 
+    /// 上游 #150（db57f32ce113）等价测试：基线无上游的 `ByteBuffer.writeSSHPacket`
+    /// （那是基线之后的上游 API 重构），故按基线状态机形态等价覆盖修复语义 ——
+    /// 长度前缀占位须真实写入：空容量 buffer 上 `.cleartext` 包路径不再经
+    /// `moveWriterIndex`（修复前在此越界），前 5 字节为回填真实值
+    /// （真值与 testServiceRequest 已钉死的同一 packet 同源）。
+    func testCleartextPacketOnEmptyBufferWritesRealLengthPrefix() throws {
+        let message = SSHMessage.serviceRequest(.init(service: "ssh-userauth"))
+        let allocator = ByteBufferAllocator()
+        var serializer = SSHPacketSerializer()
+        var parser = SSHPacketParser(allocator: allocator)
+
+        self.runVersionHandshake(serializer: &serializer, parser: &parser)
+
+        var buffer = ByteBuffer()
+        XCTAssertNoThrow(try serializer.serialize(message: message, to: &buffer))
+
+        XCTAssertEqual([0, 0, 0, 28, 10], buffer.getBytes(at: 0, length: 5))
+    }
+
     func testServiceAccept() throws {
         let message = SSHMessage.serviceAccept(.init(service: "ssh-userauth"))
         let allocator = ByteBufferAllocator()
