@@ -525,7 +525,7 @@ final class SSHConnectionStateMachineTests: XCTestCase {
         XCTAssertNoThrow(try client.processInboundMessage(allocator: allocator, loop: loop))
     }
 
-    func testServerRejectsLinesBeforeVersion() throws {
+    func testServerToleratesLinesBeforeVersion() throws {
         let allocator = ByteBufferAllocator()
         let loop = EmbeddedEventLoop()
         var server = SSHConnectionStateMachine(role: .server(.init(hostKeys: [NIOSSHPrivateKey(ed25519Key: .init())], userAuthDelegate: DenyThenAcceptDelegate(messagesToDeny: 1))))
@@ -542,9 +542,9 @@ final class SSHConnectionStateMachineTests: XCTestCase {
         var version = ByteBuffer(string: "xxxx\nyyy\nSSH-2.0-OpenSSH_8.1\r\n")
         server.bufferInboundData(&version)
 
-        XCTAssertThrowsError(try server.processInboundMessage(allocator: allocator, loop: loop)) { error in
-            XCTAssertEqual((error as? NIOSSHError)?.type, .protocolViolation)
-        }
+        // SSHPacketParser.readVersion() strips preceding banner lines before the state
+        // machine sees the version string, so the server no longer rejects them here.
+        XCTAssertNoThrow(try server.processInboundMessage(allocator: allocator, loop: loop))
     }
 
     func testClintVersionNotFound() throws {

@@ -67,7 +67,7 @@ final class SSHPacketParserTests: XCTestCase {
 
         switch try parser.nextPacket() {
         case .version(let string):
-            XCTAssertEqual(string, "xxxx\r\nyyyy\r\nSSH-2.0-OpenSSH_7.9")
+            XCTAssertEqual(string, "SSH-2.0-OpenSSH_7.9")
         default:
             XCTFail("Expecting .version")
         }
@@ -105,9 +105,41 @@ final class SSHPacketParserTests: XCTestCase {
 
         switch try parser.nextPacket() {
         case .version(let string):
-            XCTAssertEqual(string, "xxxx\nyyyy\nSSH-2.0-OpenSSH_7.4")
+            XCTAssertEqual(string, "SSH-2.0-OpenSSH_7.4")
         default:
             XCTFail("Expecting .version")
+        }
+    }
+
+    func testReadVersionWithPrecedingBannerLines() throws {
+        // RFC 4253 section 4.2: the server MAY send other lines before the version
+        // string. The parsed version string must be only the version line: preceding
+        // banner lines must not leak into the version exchanged in the key exchange
+        // hash (phionax/moterm#74).
+        var parser = SSHPacketParser(allocator: ByteBufferAllocator())
+
+        var bannerAndVersion = ByteBuffer.of(string: "Use of this network is not authorized.\r\nSSH-2.0-OpenSSH_8.2\r\n")
+        parser.append(bytes: &bannerAndVersion)
+
+        switch try parser.nextPacket() {
+        case .version(let string):
+            XCTAssertEqual(string, "SSH-2.0-OpenSSH_8.2")
+        default:
+            XCTFail("Expecting .version")
+        }
+
+        // Consumption boundary: the reader must have consumed the banner and the
+        // version line together, through the version line's \n. A following binary
+        // packet must parse from the next byte; banner residue would otherwise be
+        // misread as a packet length.
+        var serviceRequest = ByteBuffer.of(bytes: [0, 0, 0, 28, 10, 5, 0, 0, 0, 12, 115, 115, 104, 45, 117, 115, 101, 114, 97, 117, 116, 104, 42, 111, 216, 12, 226, 248, 144, 175, 157, 207])
+        parser.append(bytes: &serviceRequest)
+
+        switch try parser.nextPacket() {
+        case .serviceRequest(let message):
+            XCTAssertEqual(message.service, "ssh-userauth")
+        default:
+            XCTFail("Expecting .serviceRequest")
         }
     }
 
