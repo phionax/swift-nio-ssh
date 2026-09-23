@@ -151,8 +151,10 @@ struct SSHPacketParser {
                 
                 // Check if this line looks like an SSH version (any SSH version, not just 2.0)
                 if lineSlice.count >= 4 && lineSlice.starts(with: "SSH-".utf8) {
-                    // Found SSH version line, return everything up to and including this line
-                    var version = String(decoding: slice[slice.startIndex..<index], as: UTF8.self)
+                    // Found the SSH version line: return only this line, without any
+                    // preceding banner lines (RFC 4253 section 4.2); the version string
+                    // feeds the key exchange hash and must not be polluted by them.
+                    var version = String(decoding: lineSlice, as: UTF8.self)
                     // read including \n
                     self.buffer.moveReaderIndex(forwardBy: slice.startIndex.distance(to: index).advanced(by: 1))
                     // Remove the trailing \r if present (but keep \n removal logic for consistency)

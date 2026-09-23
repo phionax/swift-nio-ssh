@@ -1276,6 +1276,61 @@ final class ChildChannelMultiplexerTests: XCTestCase {
         self.assertChannelClose(harness.flushedMessages.last, recipientChannel: 1)
     }
 
+    func testWeDontResizeTheWindowAfterLocalClosing() throws {
+        let harness = self.harnessForbiddingInboundChannels()
+        defer {
+            harness.finish()
+        }
+
+        var childChannel: Channel?
+        harness.multiplexer.createChildChannel(channelType: .session) { channel, _ in
+            childChannel = channel
+            return channel.setOption(ChannelOptions.autoRead, value: false)
+        }
+
+        guard let childChannel = childChannel else {
+            XCTFail("Did not create child channel")
+            return
+        }
+
+        // Activate channel.
+        let channelID = self.assertChannelOpen(harness.flushedMessages.first)
+        XCTAssertNoThrow(try harness.multiplexer.receiveMessage(self.openConfirmation(originalChannelID: channelID!, peerChannelID: 1)))
+        XCTAssertEqual(harness.flushedMessages.count, 1)
+
+        // This needs a chunk that would trigger a window adjustment on a live channel. In this
+        // fork the child channel's target window equals maximumPacketSize (i.e.
+        // SSHPacketParser.defaultMaximumPacketSize = 1 << 17; the multiplexer wires the window to
+        // the packet size), not the upstream 1 << 24, so the shared bigBuffer
+        // (defaultMaximumPacketSize + 1) is large enough. After the leading single byte, a
+        // further defaultMaximumPacketSize / 2 still fits the window: no flow-control violation
+        // is raised, the data stays buffered for the later read(), and the only thing that must
+        // not happen is a window adjust on an already-locally-closed channel.
+        let buffer = ByteBuffer.bigBuffer
+
+        // We close locally the channel.
+        childChannel.close(promise: nil)
+        XCTAssertEqual(harness.flushedMessages.count, 2)
+
+        // But, for some reason, we are still receiving data that requires a window adjustment.
+        XCTAssertNoThrow(try harness.multiplexer.receiveMessage(
+            self.data(
+                peerChannelID: channelID!,
+                data: buffer.getSlice(at: buffer.readerIndex, length: 1)!
+            )
+        ))
+        XCTAssertNoThrow(try harness.multiplexer.receiveMessage(
+            self.data(
+                peerChannelID: channelID!,
+                data: buffer.getSlice(at: buffer.readerIndex, length: SSHPacketParser.defaultMaximumPacketSize / 2)!
+            )
+        ))
+
+        // This should not trigger outbound messages.
+        childChannel.read()
+        XCTAssertEqual(harness.flushedMessages.count, 2)
+    }
+
     func testRespectingMaxMessageSize() throws {
         let harness = self.harnessForbiddingInboundChannels()
         defer {
