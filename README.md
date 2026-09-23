@@ -134,3 +134,16 @@ Global requests are initiated using `NIOSSHHandler.sendGlobalRequest`, and are r
 Servers may be notified of and respond to these requests using a `GlobalRequestDelegate`. The method to implement here is `tcpForwardingRequest(_:handler:promise:)`. This delegate method will be invoked any time a global request is received. The response to the request is passed into `promise`.
 
 Forwarded channels are then sent from server to client using the `.forwardedTCPIP` channel type.
+
+## Fork notes and known limitations
+
+This is the `phionax/swift-nio-ssh` fork (Citadel lineage, pinned by moterm). Beyond upstream
+it carries one known behavioural limitation:
+
+- **Pre-version banner lines are consumed and discarded (no display path).** Since the
+  version-string pollution fix (56d7965, phionax/moterm#74), `SSHPacketParser.readVersion()`
+  strips the RFC 4253 § 4.2 banner lines that precede the version string, but the banner text
+  itself is dropped at the parsing layer. There is no API, callback, or event that surfaces it
+  to callers, so pre-auth server notices cannot be displayed. Surfacing the text would require
+  threading it through the parser, the `SSHMessage` surface, and the handler, which is
+  deliberately out of scope for the fork's maintenance line.

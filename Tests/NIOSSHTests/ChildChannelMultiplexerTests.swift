@@ -1298,8 +1298,12 @@ final class ChildChannelMultiplexerTests: XCTestCase {
         XCTAssertNoThrow(try harness.multiplexer.receiveMessage(self.openConfirmation(originalChannelID: channelID!, peerChannelID: 1)))
         XCTAssertEqual(harness.flushedMessages.count, 1)
 
-        // The default window size is 1<<24 bytes. Sadly, we need a buffer that size.
-        let buffer = ByteBuffer.bigBuffer
+        // This needs a chunk that would trigger a window adjustment on a live channel:
+        // half of the default 1 << 24 window. The shared bigBuffer shrank to
+        // defaultMaximumPacketSize + 1 (merge 364dcc8) and cannot serve that, which made
+        // this test crash since its introduction in 009287b: the 1 << 23 getSlice
+        // returned nil and the force unwrap trapped. Allocate the chunk locally instead.
+        let buffer = ByteBuffer(repeating: 0, count: (1 << 23) + 1)
 
         // We close locally the channel.
         childChannel.close(promise: nil)

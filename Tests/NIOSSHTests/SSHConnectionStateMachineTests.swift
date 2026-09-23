@@ -329,6 +329,25 @@ final class SSHConnectionStateMachineTests: XCTestCase {
         XCTAssertTrue(server.isActive)
     }
 
+    func testFullConnectionDanceToleratesBannerLinesBeforeServerVersion() throws {
+        let allocator = ByteBufferAllocator()
+        let loop = EmbeddedEventLoop()
+        var client = SSHConnectionStateMachine(role: .client(.init(userAuthDelegate: InfinitePasswordDelegate(), serverAuthDelegate: AcceptAllHostKeysDelegate())))
+        var server = SSHConnectionStateMachine(role: .server(.init(hostKeys: [NIOSSHPrivateKey(ed25519Key: .init())], userAuthDelegate: DenyThenAcceptDelegate(messagesToDeny: 1))))
+
+        // RFC 4253 § 4.2: the server greeting may carry banner lines before the version
+        // string. The parser must strip them before the version feeds the key exchange
+        // hash; a polluted string would make the client compute a different exchange
+        // hash than the server signed, failing the signature validation in this dance.
+        let bannerPrefixedGreeting = "Welcome to the moterm test server\r\n" + Constants.version
+        try self.run(clientMessage: client.start(), client: &client,
+                     serverMessage: SSHMultiMessage(.version(bannerPrefixedGreeting)), server: &server,
+                     allocator: allocator, loop: loop)
+
+        XCTAssertTrue(client.isActive)
+        XCTAssertTrue(server.isActive)
+    }
+
     // Messages that are usable once child channels are allowed.
     let channelMessages: [SSHMessage] = [
         .channelOpen(.init(type: .session, senderChannel: 0, initialWindowSize: 0, maximumPacketSize: 12)),
