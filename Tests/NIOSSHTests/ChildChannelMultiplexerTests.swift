@@ -1298,12 +1298,15 @@ final class ChildChannelMultiplexerTests: XCTestCase {
         XCTAssertNoThrow(try harness.multiplexer.receiveMessage(self.openConfirmation(originalChannelID: channelID!, peerChannelID: 1)))
         XCTAssertEqual(harness.flushedMessages.count, 1)
 
-        // This needs a chunk that would trigger a window adjustment on a live channel:
-        // half of the default 1 << 24 window. The shared bigBuffer shrank to
-        // defaultMaximumPacketSize + 1 (merge 364dcc8) and cannot serve that, which made
-        // this test crash since its introduction in 009287b: the 1 << 23 getSlice
-        // returned nil and the force unwrap trapped. Allocate the chunk locally instead.
-        let buffer = ByteBuffer(repeating: 0, count: (1 << 23) + 1)
+        // This needs a chunk that would trigger a window adjustment on a live channel. In this
+        // fork the child channel's target window equals maximumPacketSize (i.e.
+        // SSHPacketParser.defaultMaximumPacketSize = 1 << 17; the multiplexer wires the window to
+        // the packet size), not the upstream 1 << 24, so the shared bigBuffer
+        // (defaultMaximumPacketSize + 1) is large enough. After the leading single byte, a
+        // further defaultMaximumPacketSize / 2 still fits the window: no flow-control violation
+        // is raised, the data stays buffered for the later read(), and the only thing that must
+        // not happen is a window adjust on an already-locally-closed channel.
+        let buffer = ByteBuffer.bigBuffer
 
         // We close locally the channel.
         childChannel.close(promise: nil)
@@ -1319,7 +1322,7 @@ final class ChildChannelMultiplexerTests: XCTestCase {
         XCTAssertNoThrow(try harness.multiplexer.receiveMessage(
             self.data(
                 peerChannelID: channelID!,
-                data: buffer.getSlice(at: buffer.readerIndex, length: 1 << 23)!
+                data: buffer.getSlice(at: buffer.readerIndex, length: SSHPacketParser.defaultMaximumPacketSize / 2)!
             )
         ))
 

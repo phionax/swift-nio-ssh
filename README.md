@@ -144,6 +144,7 @@ it carries one known behavioural limitation:
   version-string pollution fix (56d7965, phionax/moterm#74), `SSHPacketParser.readVersion()`
   strips the RFC 4253 § 4.2 banner lines that precede the version string, but the banner text
   itself is dropped at the parsing layer. There is no API, callback, or event that surfaces it
-  to callers, so pre-auth server notices cannot be displayed. Surfacing the text would require
+  to callers, so pre-version-exchange lines (e.g. TCP-wrapper notices) cannot be displayed;
+  SSH_MSG_USERAUTH_BANNER is unaffected and still surfaces as `NIOUserAuthBannerEvent`. Surfacing the text would require
   threading it through the parser, the `SSHMessage` surface, and the handler, which is
   deliberately out of scope for the fork's maintenance line.
