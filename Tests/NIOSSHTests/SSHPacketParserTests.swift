@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Crypto
 import NIOCore
 @testable import NIOSSH
 import XCTest
@@ -253,5 +254,98 @@ public extension ByteBuffer {
         var buffer = ByteBufferAllocator().buffer(capacity: bytes.count)
         buffer.writeBytes(bytes)
         return buffer
+    }
+}
+
+
+extension SSHPacketParserTests {
+    private var gcmSchemes: [(NIOSSHTransportProtection.Type, SymmetricKeySize)] {
+        [(AES128GCMOpenSSHTransportProtection.self, .bits128),
+         (AES256GCMOpenSSHTransportProtection.self, .bits256)]
+    }
+
+    private func parserWithGCM(_ scheme: NIOSSHTransportProtection.Type,
+                               keySize: SymmetricKeySize) throws -> (SSHPacketParser, NIOSSHTransportProtection) {
+        let keys = NIOSSHSessionKeys(initialInboundIV: .init(randomBytes: 12),
+                                    initialOutboundIV: .init(randomBytes: 12),
+                                    inboundEncryptionKey: SymmetricKey(size: keySize),
+                                    outboundEncryptionKey: SymmetricKey(size: keySize),
+                                    inboundMACKey: SymmetricKey(size: .bits128),
+                                    outboundMACKey: SymmetricKey(size: .bits128))
+        let encryptor = try scheme.init(initialKeys: keys, mac: nil)
+        let decryptor = try scheme.init(initialKeys: keys.inverted, mac: nil)
+        var parser = SSHPacketParser(allocator: ByteBufferAllocator())
+        self.feedVersion(to: &parser)
+        parser.addEncryption(decryptor)
+        return (parser, encryptor)
+    }
+
+    func testGCMRejectsOverflowingUnauthenticatedLengths() throws {
+        for (scheme, keySize) in self.gcmSchemes {
+            for length in [UInt32.max, UInt32.max - 15] {
+                var (parser, _) = try self.parserWithGCM(scheme, keySize: keySize)
+                var header = ByteBufferAllocator().buffer(capacity: 16)
+                header.writeInteger(length)
+                header.writeRepeatingByte(0, count: 12)
+                parser.append(bytes: &header)
+                XCTAssertThrowsError(try parser.nextPacket()) { error in
+                    XCTAssertEqual((error as? NIOSSHError)?.type, .invalidEncryptedPacketLength)
+                }
+            }
+        }
+    }
+
+    func testGCMRejectsEqualAndExcessiveTotalLength() throws {
+        for (scheme, keySize) in self.gcmSchemes {
+            for length: UInt32 in [131056, 131072, 131088] {
+                var (parser, _) = try self.parserWithGCM(scheme, keySize: keySize)
+                var header = ByteBufferAllocator().buffer(capacity: 16)
+                header.writeInteger(length)
+                header.writeRepeatingByte(0, count: 12)
+                parser.append(bytes: &header)
+                XCTAssertThrowsError(try parser.nextPacket()) { error in
+                    XCTAssertEqual((error as? NIOSSHError)?.type, .invalidEncryptedPacketLength)
+                }
+            }
+        }
+    }
+
+    func testGCMOverflowingFragmentedHeaderWaitsThenRejects() throws {
+        for (scheme, keySize) in self.gcmSchemes {
+            var (parser, _) = try self.parserWithGCM(scheme, keySize: keySize)
+            var first = ByteBufferAllocator().buffer(capacity: 15)
+            first.writeInteger(UInt32.max)
+            first.writeRepeatingByte(0, count: 11)
+            parser.append(bytes: &first)
+            XCTAssertNil(try parser.nextPacket())
+            var last = ByteBufferAllocator().buffer(capacity: 1)
+            last.writeInteger(UInt8(0))
+            parser.append(bytes: &last)
+            XCTAssertThrowsError(try parser.nextPacket()) { error in
+                XCTAssertEqual((error as? NIOSSHError)?.type, .invalidEncryptedPacketLength)
+            }
+        }
+    }
+
+    func testGCMMaximumAlignedValidPacketAuthenticatesAndParses() throws {
+        for (scheme, keySize) in self.gcmSchemes {
+            var (parser, encryptor) = try self.parserWithGCM(scheme, keySize: keySize)
+            var data = ByteBufferAllocator().buffer(capacity: 131030)
+            data.writeRepeatingByte(42, count: 131030)
+            let message = SSHMessage.ignore(.init(data: data))
+            var packet = ByteBufferAllocator().buffer(capacity: 131060)
+            try encryptor.encryptPacket(.init(message: message), to: &packet, sequenceNumber: 0)
+            XCTAssertEqual(packet.getInteger(at: packet.readerIndex, as: UInt32.self), 131040)
+            XCTAssertEqual(packet.readableBytes, 131060)
+            var first = packet.readSlice(length: 15)!
+            parser.append(bytes: &first)
+            XCTAssertNil(try parser.nextPacket())
+            var next = packet.readSlice(length: 1)!
+            parser.append(bytes: &next)
+            XCTAssertNil(try parser.nextPacket())
+            parser.append(bytes: &packet)
+            XCTAssertEqual(try parser.nextPacket(), message)
+            XCTAssertNil(try parser.nextPacket())
+        }
     }
 }
